@@ -9,7 +9,7 @@ import io
 st.set_page_config(page_title="Exam Duty Allotment System", layout="wide")
 
 st.title("📘 Exam Duty Allotment – Rank Generator")
-st.markdown("A complete random-based ranking system with tie-breaking.")
+st.markdown("Automatically handles missing score column & generates ranking.")
 
 
 # ----------------------------------------------------------
@@ -17,9 +17,7 @@ st.markdown("A complete random-based ranking system with tie-breaking.")
 # ----------------------------------------------------------
 st.sidebar.header("Settings")
 
-seed = st.sidebar.number_input(
-    "Random Seed (for reproducible results)", value=2025
-)
+seed = st.sidebar.number_input("Random Seed (for reproducible results)", value=2025)
 
 sort_method = st.sidebar.selectbox(
     "Tie Break Priority",
@@ -34,33 +32,43 @@ sort_method = st.sidebar.selectbox(
 # ----------------------------------------------------------
 # FILE UPLOAD
 # ----------------------------------------------------------
-st.subheader("Upload Data File")
-uploaded_file = st.file_uploader("Upload CSV file with columns: user_id, score", type=["csv"])
+st.subheader("Upload CSV or Excel file")
+uploaded_file = st.file_uploader("Upload file", type=["csv", "xlsx"])
 
 if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+    # Read file based on extension
+    if uploaded_file.name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
+
     st.success("File uploaded successfully!")
     st.dataframe(df, use_container_width=True)
 
     # ------------------------------------------------------
-    # VALIDATION
+    # CREATE SCORE IF MISSING
     # ------------------------------------------------------
-    if "user_id" not in df.columns:
-        st.error("❌ Column 'user_id' is missing in CSV")
-        st.stop()
-
     if "score" not in df.columns:
-        st.error("❌ Column 'score' is missing in CSV")
-        st.stop()
+        st.warning("⚠️ Column 'score' missing — generating score automatically.")
+
+        # Apply preference-based scoring
+        df["score"] = (
+            df["pref1"].notna().astype(int) * 3 +
+            df["pref2"].notna().astype(int) * 2 +
+            df["pref3"].notna().astype(int) * 1
+        )
+
+        st.info("✔ Score generated based on preferences (3-2-1 weight).")
+        st.dataframe(df, use_container_width=True)
 
     # ------------------------------------------------------
-    # ADD RANDOM COLUMN
+    # ADD RANDOM NUMBER
     # ------------------------------------------------------
     random.seed(int(seed))
     df["rand"] = [random.random() for _ in range(len(df))]
 
     # ------------------------------------------------------
-    # SORTING LOGIC
+    # SORT LOGIC
     # ------------------------------------------------------
     if sort_method == "Score → Random → User ID":
         df = df.sort_values(
@@ -78,18 +86,15 @@ if uploaded_file:
         df = df.sort_values(by="rand", ascending=False)
 
     # ------------------------------------------------------
-    # ASSIGN RANKS
+    # ASSIGN RANK
     # ------------------------------------------------------
     df["rank"] = range(1, len(df) + 1)
 
-    # ------------------------------------------------------
-    # SHOW OUTPUT
-    # ------------------------------------------------------
     st.subheader("🎯 Final Ranked Output")
     st.dataframe(df, use_container_width=True)
 
     # ------------------------------------------------------
-    # DOWNLOAD SECTION
+    # DOWNLOAD OUTPUT
     # ------------------------------------------------------
     st.subheader("⬇ Download Results")
 
@@ -113,9 +118,5 @@ if uploaded_file:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-
-# ----------------------------------------------------------
-# FOOTER
-# ----------------------------------------------------------
 st.markdown("---")
-st.markdown("Developed for **Swayambu** – Exam Duty Automation System")
+
