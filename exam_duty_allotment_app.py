@@ -1,121 +1,76 @@
 import streamlit as st
 import pandas as pd
 import random
-import io
 
-# ----------------------------------------------------------
-# APP HEADER
-# ----------------------------------------------------------
-st.set_page_config(page_title="Exam Duty Allotment System", layout="wide")
+st.set_page_config(page_title="Center Allotment System", layout="wide")
 
-st.title("📘 Exam Duty Allotment – Rank Generator")
-st.markdown("Automatically handles missing score column & generates ranking.")
+st.title("🏫 Exam Center Allotment System (Preference Based)")
+st.markdown("Each user will be allotted to a center based on Pref1 → Pref2 → Pref3")
 
+seed = st.sidebar.number_input("Random Seed", value=2025)
 
-# ----------------------------------------------------------
-# SIDEBAR SETTINGS
-# ----------------------------------------------------------
-st.sidebar.header("Settings")
-
-seed = st.sidebar.number_input("Random Seed (for reproducible results)", value=2025)
-
-sort_method = st.sidebar.selectbox(
-    "Tie Break Priority",
-    [
-        "Score → Random → User ID",
-        "Score → User ID → Random",
-        "Random Only (Ignore Score)",
-    ],
-)
-
-
-# ----------------------------------------------------------
-# FILE UPLOAD
-# ----------------------------------------------------------
-st.subheader("Upload CSV or Excel file")
-uploaded_file = st.file_uploader("Upload file", type=["csv", "xlsx"])
+uploaded_file = st.file_uploader("Upload CSV/Excel with user_id, pref1, pref2, pref3", type=["csv", "xlsx"])
 
 if uploaded_file:
-    # Read file based on extension
+
+    # Load file
     if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file)
 
-    st.success("File uploaded successfully!")
-    st.dataframe(df, use_container_width=True)
+    st.subheader("Uploaded Data")
+    st.dataframe(df)
 
-    # ------------------------------------------------------
-    # CREATE SCORE IF MISSING
-    # ------------------------------------------------------
-    if "score" not in df.columns:
-        st.warning("⚠️ Column 'score' missing — generating score automatically.")
+    # Validate columns
+    required_cols = ["user_id", "pref1", "pref2", "pref3"]
+    for col in required_cols:
+        if col not in df.columns:
+            st.error(f"❌ Missing column: {col}")
+            st.stop()
 
-        # Apply preference-based scoring
-        df["score"] = (
-            df["pref1"].notna().astype(int) * 3 +
-            df["pref2"].notna().astype(int) * 2 +
-            df["pref3"].notna().astype(int) * 1
-        )
-
-        st.info("✔ Score generated based on preferences (3-2-1 weight).")
-        st.dataframe(df, use_container_width=True)
-
-    # ------------------------------------------------------
-    # ADD RANDOM NUMBER
-    # ------------------------------------------------------
-    random.seed(int(seed))
+    # Add random ranking for tie-breaking
+    random.seed(seed)
     df["rand"] = [random.random() for _ in range(len(df))]
 
-    # ------------------------------------------------------
-    # SORT LOGIC
-    # ------------------------------------------------------
-    if sort_method == "Score → Random → User ID":
-        df = df.sort_values(
-            by=["score", "rand", "user_id"],
-            ascending=[False, False, True]
-        )
+    # Sort users so assignment is deterministic
+    df = df.sort_values(by=["rand", "user_id"], ascending=[False, True]).reset_index(drop=True)
 
-    elif sort_method == "Score → User ID → Random":
-        df = df.sort_values(
-            by=["score", "user_id", "rand"],
-            ascending=[False, True, False]
-        )
+    # Track center allotments
+    allotted_centers = {}
+    final_allotment = []
 
-    elif sort_method == "Random Only (Ignore Score)":
-        df = df.sort_values(by="rand", ascending=False)
+    for _, row in df.iterrows():
+        user = row["user_id"]
+        prefs = [row["pref1"], row["pref2"], row["pref3"]]
 
-    # ------------------------------------------------------
-    # ASSIGN RANK
-    # ------------------------------------------------------
-    df["rank"] = range(1, len(df) + 1)
+        allotted = None
 
-    st.subheader("🎯 Final Ranked Output")
-    st.dataframe(df, use_container_width=True)
+        for p in prefs:
+            if p not in allotted_centers:  # Center free
+                allotted = p
+                allotted_centers[p] = user
+                break
 
-    # ------------------------------------------------------
-    # DOWNLOAD OUTPUT
-    # ------------------------------------------------------
-    st.subheader("⬇ Download Results")
+        final_allotment.append({
+            "user_id": user,
+            "allotted_center": allotted if allotted else "NOT ALLOTTED",
+            "pref1": row["pref1"],
+            "pref2": row["pref2"],
+            "pref3": row["pref3"]
+        })
 
-    # CSV Export
-    csv_data = df.to_csv(index=False).encode("utf-8")
+    result_df = pd.DataFrame(final_allotment)
+
+    st.subheader("🎯 Final Allotment Result")
+    st.dataframe(result_df, use_container_width=True)
+
+    # Download
     st.download_button(
-        label="Download Ranked CSV",
-        data=csv_data,
-        file_name="exam_duty_ranked.csv",
+        label="Download Allotment CSV",
+        data=result_df.to_csv(index=False).encode("utf-8"),
+        file_name="center_allotment.csv",
         mime="text/csv"
-    )
-
-    # Excel Export
-    excel_buffer = io.BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
-        df.to_excel(writer, index=False, sheet_name="Ranks")
-    st.download_button(
-        label="Download Excel File",
-        data=excel_buffer,
-        file_name="exam_duty_ranked.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 st.markdown("---")
