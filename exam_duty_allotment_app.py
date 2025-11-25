@@ -137,13 +137,19 @@ if user_file and center_file:
     st.dataframe(ranked_users, use_container_width=True)
 
     # ------------------ CAPACITY DICT ------------------ #
-    capacity_dict = {
-        str(row["center_code"]): int(row["capacity"])
-        for _, row in center_df.iterrows()
-    }
-
-    # Remaining capacity will be modified as we allot
+   # -------- FIX: Correct center capacity handling --------
+    center_df["center_code"] = center_df["center_code"].astype(str)
+    center_df["capacity"] = center_df["capacity"].astype(int)
+    
+    # Sum duplicate centers → Correct capacity
+    capacity_dict = (
+        center_df.groupby("center_code")["capacity"]
+        .sum()
+        .to_dict()
+    )
+    
     remaining_capacity = capacity_dict.copy()
+
 
     # ------------------ ALLOTMENT LOGIC ------------------ #
     st.markdown("## 🎯 Allotment Processing")
@@ -336,3 +342,4 @@ if user_file and center_file:
 
 else:
     st.info("👆 Upload both Users file and Center Capacity file to start.")
+
