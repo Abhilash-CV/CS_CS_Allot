@@ -3,3 +3,4 @@ xlsxwriter
 openpyxl
 reportlab
 pymysql
+mysql-connector-python
