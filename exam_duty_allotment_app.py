@@ -336,10 +336,11 @@ if user_file and center_file:
                 mime="application/pdf",
             )
         except ModuleNotFoundError:
-            st.error("❌ Could not import `reportlab`. Please install it: `pip install reportlab`")
+           # st.error("❌ Could not import `reportlab`. Please install it: `pip install reportlab`")
         except Exception as e:
             st.error(f"PDF generation failed: {e}")
 
 else:
     st.info("👆 Upload both Users file and Center Capacity file to start.")
+
 
