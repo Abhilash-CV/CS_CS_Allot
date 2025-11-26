@@ -11,8 +11,8 @@ from reportlab.pdfgen import canvas
 # ==========================================================
 
 MYSQL_HOST = "192.192.192.100"
-MYSQL_USER = "root"
-MYSQL_PASSWORD = "your_password"
+MYSQL_USER = "intern"
+MYSQL_PASSWORD = "Intern@100"
 MYSQL_DB = "VMS2025"
 
 
@@ -307,3 +307,4 @@ if st.button("Generate Duty Slip PDF"):
         f"duty_slips_round_{round_no}.pdf",
         "application/pdf",
     )
+
