@@ -472,103 +472,104 @@ if mode == "Admin - Allotment":
         )
 
         # ------------------ DUTY SLIP PDF + AUTO-EMAIL ------------------ #
+        # ------------------ DUTY SLIP PDF + AUTO-EMAIL ------------------ #
         st.markdown("## 🧾 Generate Duty Slip PDF")
-
-        st.info("PDF generation uses the `reportlab` library. Install it via: `pip install reportlab`")
-
+        
         generate_pdf = st.button("Generate Duty Slip PDF for All Allotted Users")
-
+        
         if generate_pdf:
             try:
                 from reportlab.lib.pagesizes import A4
                 from reportlab.pdfgen import canvas
-
-                # Email column check if needed
+        
+                # Email column check
                 if enable_email and "email" not in users_df.columns:
                     st.error("Users file does not have an 'email' column. Cannot send emails.")
                     enable_email = False
-
-                buffer = io.BytesIO()
-                c = canvas.Canvas(buffer, pagesize=A4)
-                width, height = A4
-
+        
                 # Map user_id -> email
                 email_map = {}
                 if enable_email:
                     tmp_users = users_df.copy()
                     tmp_users["user_id"] = tmp_users["user_id"].astype(str)
                     email_map = dict(zip(tmp_users["user_id"], tmp_users["email"]))
-
-                # Only for users with a real center allotment
+        
+                # -------------- Combined PDF (download for admin) -------------- #
+                combined_buffer = io.BytesIO()
+                combined_canvas = canvas.Canvas(combined_buffer, pagesize=A4)
+                width, height = A4
+        
                 for _, row in final_allot_df.iterrows():
-                    if str(row["allotted_center"]).startswith("NOT") or row[
-                        "allotted_center"
-                    ] in ["EXCLUDED_THIS_ROUND", "MANUAL-FAILED"]:
+                    # Skip non-allotted users
+                    if (
+                        str(row["allotted_center"]).startswith("NOT")
+                        or row["allotted_center"] in ["EXCLUDED_THIS_ROUND", "MANUAL-FAILED"]
+                    ):
                         continue
-
-                    # Combined PDF page
-                    c.setFont("Helvetica-Bold", 16)
-                    c.drawString(50, height - 60, "Exam Duty Slip")
-
-                    c.setFont("Helvetica", 12)
-                    c.drawString(50, height - 100, f"Round No: {row['round_no']}")
-                    c.drawString(50, height - 120, f"User ID: {row['user_id']}")
-                    c.drawString(50, height - 140, f"Allotted Center: {row['allotted_center']}")
-                    c.drawString(
+        
+                    # Draw page for combined PDF
+                    combined_canvas.setFont("Helvetica-Bold", 16)
+                    combined_canvas.drawString(50, height - 60, "Exam Duty Slip")
+                    combined_canvas.setFont("Helvetica", 12)
+                    combined_canvas.drawString(50, height - 100, f"Round No: {row['round_no']}")
+                    combined_canvas.drawString(50, height - 120, f"User ID: {row['user_id']}")
+                    combined_canvas.drawString(
+                        50, height - 140, f"Allotted Center: {row['allotted_center']}"
+                    )
+                    combined_canvas.drawString(
                         50,
                         height - 170,
                         f"Preference Order: {row['pref1']}, {row['pref2']}, {row['pref3']}",
                     )
-                    c.drawString(
+                    combined_canvas.drawString(
                         50,
                         height - 200,
                         "Please report to the allotted center as per schedule.",
                     )
-
-                    c.showPage()
-
-                    # Individual email
-                    if enable_email and smtp_host and smtp_user and smtp_pass:
-                        try:
-                            indiv_buffer = io.BytesIO()
-                            c2 = canvas.Canvas(indiv_buffer, pagesize=A4)
-                            c2.setFont("Helvetica-Bold", 16)
-                            c2.drawString(50, height - 60, "Exam Duty Slip")
-
-                            c2.setFont("Helvetica", 12)
-                            c2.drawString(50, height - 100, f"Round No: {row['round_no']}")
-                            c2.drawString(50, height - 120, f"User ID: {row['user_id']}")
-                            c2.drawString(
-                                50,
-                                height - 140,
-                                f"Allotted Center: {row['allotted_center']}",
-                            )
-                            c2.drawString(
-                                50,
-                                height - 170,
-                                f"Preference Order: {row['pref1']}, {row['pref2']}, {row['pref3']}",
-                            )
-                            c2.drawString(
-                                50,
-                                height - 200,
-                                "Please report to the allotted center as per schedule.",
-                            )
-
-                            c2.showPage()
-                            c2.save()
-                            indiv_buffer.seek(0)
-
-                            uid = str(row["user_id"])
-                            to_email = email_map.get(uid)
-                            if to_email:
+                    combined_canvas.showPage()
+        
+                    # -------------- Individual PDF (email only) -------------- #
+                    if enable_email:
+                        uid = str(row["user_id"])
+                        user_email = email_map.get(uid)
+        
+                        if user_email:
+                            try:
+                                indiv_buffer = io.BytesIO()
+                                c2 = canvas.Canvas(indiv_buffer, pagesize=A4)
+        
+                                c2.setFont("Helvetica-Bold", 16)
+                                c2.drawString(50, height - 60, "Exam Duty Slip")
+                                c2.setFont("Helvetica", 12)
+                                c2.drawString(50, height - 100, f"Round No: {row['round_no']}")
+                                c2.drawString(50, height - 120, f"User ID: {row['user_id']}")
+                                c2.drawString(
+                                    50, height - 140, f"Allotted Center: {row['allotted_center']}"
+                                )
+                                c2.drawString(
+                                    50,
+                                    height - 170,
+                                    f"Preference Order: {row['pref1']}, {row['pref2']}, {row['pref3']}",
+                                )
+                                c2.drawString(
+                                    50,
+                                    height - 200,
+                                    "Please report to the allotted center as per schedule.",
+                                )
+                                c2.showPage()
+                                c2.save()
+                                indiv_buffer.seek(0)
+        
+                                # Send only THIS candidate's PDF to THEIR email
                                 subject = "Exam Duty Slip"
                                 body = (
                                     "Dear Candidate,\n\n"
                                     "Please find your exam duty slip attached.\n\n"
                                     "Regards,\nExam Cell"
                                 )
+        
                                 send_email_with_attachment(
-                                    to_email,
+                                    user_email,
                                     subject,
                                     body,
                                     indiv_buffer.getvalue(),
@@ -578,26 +579,21 @@ if mode == "Admin - Allotment":
                                     smtp_user,
                                     smtp_pass,
                                 )
-                        except Exception as ee:
-                            st.warning(
-                                f"Failed to send email to user {row['user_id']}: {ee}"
-                            )
-
-                c.save()
-                buffer.seek(0)
-
+                            except Exception as ee:
+                                st.warning(f"Failed to send email to {uid}: {ee}")
+        
+                combined_canvas.save()
+                combined_buffer.seek(0)
+        
                 st.download_button(
-                    label="Download Duty Slips PDF",
-                    data=buffer.getvalue(),
+                    label="Download Duty Slips PDF (Admin)",
+                    data=combined_buffer.getvalue(),
                     file_name=f"duty_slips_round_{round_no}.pdf",
                     mime="application/pdf",
                 )
-            except ModuleNotFoundError:
-                st.error(
-                    "❌ Could not import `reportlab`. Please install it: `pip install reportlab`"
-                )
+        
             except Exception as e:
-                st.error(f"PDF generation failed: {e}")
+                st.error(f"PDF generation or email failed: {e}")
 
     else:
         st.info("👆 Upload both Users file and Center Capacity file to start.")
@@ -679,3 +675,4 @@ if mode == "User - View Duty Slip":
                             )
                         except Exception as e:
                             st.error(f"PDF generation failed: {e}")
+
