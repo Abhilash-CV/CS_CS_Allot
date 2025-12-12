@@ -183,7 +183,7 @@ if mode == "Admin - Allotment":
 
     with col_u2:
         center_file = st.file_uploader(
-            "Upload Exam Center Capacity File (center_code, capacity)",
+            "Upload Exam Center Capacity File (center_code, venueno, capacity)",
             type=["csv", "xlsx"],
             key="center_file",
         )
@@ -195,7 +195,7 @@ if mode == "Admin - Allotment":
         else:
             users_df = pd.read_excel(user_file)
 
-        # Read centers file
+        # Read centers file (with venueno rows)
         if center_file.name.endswith(".csv"):
             center_df = pd.read_csv(center_file)
         else:
@@ -206,7 +206,7 @@ if mode == "Admin - Allotment":
         st.markdown("### 👥 Users Data")
         st.dataframe(users_df, use_container_width=True)
 
-        st.markdown("### 🏫 Exam Centers & Capacities")
+        st.markdown("### 🏫 Exam Centers & Venues (uploaded)")
         st.dataframe(center_df, use_container_width=True)
 
         # --------- Validate Columns --------- #
@@ -216,7 +216,7 @@ if mode == "Admin - Allotment":
                 st.error(f"❌ Users file missing required column: **{col}**")
                 st.stop()
 
-        required_center_cols = ["center_code", "capacity"]
+        required_center_cols = ["center_code", "venueno", "capacity"]
         for col in required_center_cols:
             if col not in center_df.columns:
                 st.error(f"❌ Center file missing required column: **{col}**")
@@ -224,6 +224,11 @@ if mode == "Admin - Allotment":
 
         # Ensure created_at is datetime
         users_df["created_at"] = pd.to_datetime(users_df["created_at"])
+
+        # Normalize center_df types
+        center_df["center_code"] = center_df["center_code"].astype(str)
+        center_df["venueno"] = center_df["venueno"].astype(str)
+        center_df["capacity"] = center_df["capacity"].astype(int)
 
         # ------------------ ADMIN OVERRIDES ------------------ #
         st.markdown("## 🛠 Admin Override Panel (Main)")
@@ -248,7 +253,7 @@ if mode == "Admin - Allotment":
                 )
                 override_center = st.selectbox(
                     "Choose center to allot manually",
-                    options=center_df["center_code"].astype(str).tolist(),
+                    options=sorted(center_df["center_code"].unique().astype(str).tolist()),
                 )
                 st.info(
                     "This user will be allotted to this center **before** automatic allotment, "
@@ -266,17 +271,21 @@ if mode == "Admin - Allotment":
         ranked_users = generate_rank(users_df.copy(), seed=seed)
         st.dataframe(ranked_users, use_container_width=True)
 
-        # ------------------ CAPACITY DICT ------------------ #
-        center_df["center_code"] = center_df["center_code"].astype(str)
-        center_df["capacity"] = center_df["capacity"].astype(int)
+        # ------------------ CAPACITY DICT & VENUE MAP ------------------ #
+        # Sum capacity per center (total seats available at center level)
+        capacity_dict = center_df.groupby("center_code")["capacity"].sum().to_dict()
 
-        # Sum duplicate centers → Correct capacity
-        capacity_dict = (
-            center_df.groupby("center_code")["capacity"]
-            .sum()
-            .to_dict()
-        )
+        # Build venue slots per center: center_code -> list of venueno (each repeated by its capacity)
+        venue_map = {}
+        for _, r in center_df.iterrows():
+            center = str(r["center_code"])
+            venue = str(r["venueno"])
+            cap = int(r["capacity"])
+            venue_map.setdefault(center, [])
+            for _ in range(cap):
+                venue_map[center].append(venue)
 
+        # remaining_capacity is center-level seats left
         remaining_capacity = capacity_dict.copy()
 
         # ------------------ ALLOTMENT PROCESSING ------------------ #
@@ -295,13 +304,24 @@ if mode == "Admin - Allotment":
 
             # Check capacity
             if center_code in remaining_capacity and remaining_capacity[center_code] > 0:
+                # Allocate center-level seat
                 remaining_capacity[center_code] -= 1
+
+                # Assign venue if available
+                venue_no = None
+                if center_code in venue_map and venue_map[center_code]:
+                    venue_no = venue_map[center_code].pop(0)
+                else:
+                    # no venue available even if center capacity indicated (edge case)
+                    venue_no = "NO_VENUE"
+
                 allot_records.append(
                     {
                         "round_no": round_no,
                         "rank": row["rank"],
                         "user_id": row["user_id"],
                         "allotted_center": center_code,
+                        "venueno": venue_no,
                         "pref1": row["pref1"],
                         "pref2": row["pref2"],
                         "pref3": row["pref3"],
@@ -315,6 +335,7 @@ if mode == "Admin - Allotment":
                         "rank": row["rank"],
                         "user_id": row["user_id"],
                         "allotted_center": "NOT ALLOTTED (NO CAPACITY)",
+                        "venueno": "",
                         "pref1": row["pref1"],
                         "pref2": row["pref2"],
                         "pref3": row["pref3"],
@@ -338,6 +359,7 @@ if mode == "Admin - Allotment":
                         "rank": row["rank"],
                         "user_id": row["user_id"],
                         "allotted_center": "EXCLUDED_THIS_ROUND",
+                        "venueno": "",
                         "pref1": row["pref1"],
                         "pref2": row["pref2"],
                         "pref3": row["pref3"],
@@ -348,31 +370,52 @@ if mode == "Admin - Allotment":
 
             prefs = [row["pref1"], row["pref2"], row["pref3"]]
             allotted_center = None
+            assigned_venue = ""
 
             for p in prefs:
                 if pd.isna(p):
                     continue
                 p_str = str(p)
                 if p_str in remaining_capacity and remaining_capacity[p_str] > 0:
+                    # allocate at center level
                     remaining_capacity[p_str] -= 1
                     allotted_center = p_str
+
+                    # assign a venue from the venue_map
+                    if p_str in venue_map and venue_map[p_str]:
+                        assigned_venue = venue_map[p_str].pop(0)
+                    else:
+                        assigned_venue = "NO_VENUE"
                     break
 
             if allotted_center is None:
-                allotted_center = "NOT ALLOTTED (NO SEAT)"
-
-            allot_records.append(
-                {
-                    "round_no": round_no,
-                    "rank": row["rank"],
-                    "user_id": row["user_id"],
-                    "allotted_center": allotted_center,
-                    "pref1": row["pref1"],
-                    "pref2": row["pref2"],
-                    "pref3": row["pref3"],
-                    "source": "AUTO",
-                }
-            )
+                allot_records.append(
+                    {
+                        "round_no": round_no,
+                        "rank": row["rank"],
+                        "user_id": row["user_id"],
+                        "allotted_center": "NOT ALLOTTED (NO SEAT)",
+                        "venueno": "",
+                        "pref1": row["pref1"],
+                        "pref2": row["pref2"],
+                        "pref3": row["pref3"],
+                        "source": "AUTO",
+                    }
+                )
+            else:
+                allot_records.append(
+                    {
+                        "round_no": round_no,
+                        "rank": row["rank"],
+                        "user_id": row["user_id"],
+                        "allotted_center": allotted_center,
+                        "venueno": assigned_venue,
+                        "pref1": row["pref1"],
+                        "pref2": row["pref2"],
+                        "pref3": row["pref3"],
+                        "source": "AUTO",
+                    }
+                )
 
         final_allot_df = pd.DataFrame(allot_records)
 
@@ -437,7 +480,7 @@ if mode == "Admin - Allotment":
         outcome_dist.columns = ["allotted_center", "count"]
         st.dataframe(outcome_dist, use_container_width=True)
 
-        # ------------------ CAPACITY SUMMARY ------------------ #
+        # ------------------ CAPACITY SUMMARY (aggregate per center) ------------------ #
         st.markdown("## 📊 Capacity Usage Summary (Main)")
 
         used_counts = final_allot_df[
@@ -447,8 +490,13 @@ if mode == "Admin - Allotment":
             used_counts.groupby("allotted_center").size().reset_index(name="used")
         )
 
-        cap_summary = center_df.copy()
-        cap_summary["center_code"] = cap_summary["center_code"].astype(str)
+        cap_summary = (
+            center_df.groupby("center_code")["capacity"]
+            .sum()
+            .reset_index()
+            .rename(columns={"center_code": "center_code", "capacity": "capacity"})
+        )
+
         cap_summary = cap_summary.merge(
             used_counts,
             how="left",
@@ -873,14 +921,20 @@ if mode == "Admin - Allotment":
                         height - 140,
                         f"Allotted Center: {row['allotted_center']}",
                     )
+                    # Venue display
                     combined_canvas.drawString(
                         50,
-                        height - 170,
+                        height - 160,
+                        f"Venue No: {row.get('venueno', '')}",
+                    )
+                    combined_canvas.drawString(
+                        50,
+                        height - 190,
                         f"Preference Order: {row['pref1']}, {row['pref2']}, {row['pref3']}",
                     )
                     combined_canvas.drawString(
                         50,
-                        height - 200,
+                        height - 220,
                         "Please report to the allotted center as per schedule.",
                     )
                     combined_canvas.showPage()
@@ -915,12 +969,17 @@ if mode == "Admin - Allotment":
                                 )
                                 c2.drawString(
                                     50,
-                                    height - 170,
+                                    height - 160,
+                                    f"Venue No: {row.get('venueno', '')}",
+                                )
+                                c2.drawString(
+                                    50,
+                                    height - 190,
                                     f"Preference Order: {row['pref1']}, {row['pref2']}, {row['pref3']}",
                                 )
                                 c2.drawString(
                                     50,
-                                    height - 200,
+                                    height - 220,
                                     "Please report to the allotted center as per schedule.",
                                 )
                                 c2.showPage()
@@ -1034,14 +1093,22 @@ if mode == "User - View Duty Slip":
                                 height - 140,
                                 f"Allotted Center: {exam_row['allotted_center']}",
                             )
+                            # Venue display in user PDF
+                            if "venueno" in exam_row:
+                                c.drawString(
+                                    50,
+                                    height - 160,
+                                    f"Venue No: {exam_row.get('venueno', '')}",
+                                )
+
                             c.drawString(
                                 50,
-                                height - 170,
+                                height - 190,
                                 f"Preference Order: {exam_row['pref1']}, {exam_row['pref2']}, {exam_row['pref3']}",
                             )
                             c.drawString(
                                 50,
-                                height - 200,
+                                height - 220,
                                 "Please report to the allotted center as per schedule.",
                             )
 
